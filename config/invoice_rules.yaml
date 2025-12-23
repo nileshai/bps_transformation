@@ -1,0 +1,252 @@
+# Invoice Processing Rules
+# ========================
+# Business rules for automated invoice processing (Accounts Payable)
+
+rules:
+  # --- PAYMENT RULES ---
+
+  - id: AUTO_PAY_MICRO
+    name: Auto-Pay Micro Invoices
+    description: Invoices under $100 auto-pay immediately
+    category: payment
+    priority: low
+    conditions:
+      - field: total_amount
+        operator: less_equal
+        value: 100
+    action: auto_pay
+    action_params:
+      payment_priority: normal
+      payment_method: ach
+    enabled: true
+
+  - id: AUTO_PAY_SMALL
+    name: Auto-Pay Small Invoices
+    description: Invoices $100-$1000 from approved vendors
+    category: payment
+    priority: low
+    logic: AND
+    conditions:
+      - field: total_amount
+        operator: between
+        value: 100
+        value2: 1000
+      - field: vendor_approved
+        operator: equals
+        value: true
+    action: auto_pay
+    action_params:
+      payment_priority: normal
+      approval_level: automatic
+    enabled: true
+
+  # --- APPROVAL ROUTING ---
+
+  - id: MANAGER_APPROVAL
+    name: Manager Approval Required
+    description: Invoices $1,000 - $10,000
+    category: approval
+    priority: medium
+    conditions:
+      - field: total_amount
+        operator: between
+        value: 1000
+        value2: 10000
+    action: route_for_approval
+    action_params:
+      route_to: department_manager
+      approval_level: manager
+      sla_hours: 48
+    enabled: true
+
+  - id: DIRECTOR_APPROVAL
+    name: Director Approval Required
+    description: Invoices $10,000 - $50,000
+    category: approval
+    priority: high
+    conditions:
+      - field: total_amount
+        operator: between
+        value: 10000
+        value2: 50000
+    action: route_for_approval
+    action_params:
+      route_to: department_director
+      approval_level: director
+      sla_hours: 24
+    enabled: true
+
+  - id: EXECUTIVE_APPROVAL
+    name: Executive Approval Required
+    description: Invoices over $50,000
+    category: approval
+    priority: critical
+    conditions:
+      - field: total_amount
+        operator: greater_than
+        value: 50000
+    action: route_for_approval
+    action_params:
+      route_to: cfo
+      approval_level: executive
+      flag: high_value
+      sla_hours: 8
+    enabled: true
+
+  # --- URGENCY RULES ---
+
+  - id: PAST_DUE_URGENT
+    name: Past Due - Urgent Payment
+    description: Invoice already past due date
+    category: urgency
+    priority: critical
+    conditions:
+      - field: days_past_due
+        operator: greater_than
+        value: 0
+    action: prioritize_payment
+    action_params:
+      flag: past_due
+      payment_priority: urgent
+      notify: ["accounts_payable_manager"]
+    enabled: true
+
+  - id: EARLY_PAY_DISCOUNT
+    name: Early Payment Discount Available
+    description: Capture early payment discounts
+    category: urgency
+    priority: high
+    logic: AND
+    conditions:
+      - field: early_pay_discount
+        operator: greater_than
+        value: 0
+      - field: days_to_discount_deadline
+        operator: less_equal
+        value: 5
+    action: prioritize_payment
+    action_params:
+      payment_priority: high
+      flag: discount_available
+      notify: ["accounts_payable"]
+    enabled: true
+
+  # --- VALIDATION RULES ---
+
+  - id: VALIDATE_PO
+    name: Validate Purchase Order
+    description: Invoice must have matching PO
+    category: validation
+    priority: high
+    conditions:
+      - field: purchase_order_number
+        operator: is_empty
+    action: request_information
+    action_params:
+      flag: missing_po
+      request_from: vendor
+      request_fields: ["purchase_order"]
+    enabled: true
+
+  - id: VALIDATE_TAX
+    name: Validate Tax Information
+    description: Check for valid vendor tax ID
+    category: validation
+    priority: medium
+    conditions:
+      - field: vendor_tax_id
+        operator: is_empty
+    action: flag_for_review
+    action_params:
+      flag: missing_tax_id
+      route_to: vendor_management
+    enabled: true
+
+  - id: VALIDATE_AMOUNT_MATCH
+    name: Validate PO Amount Match
+    description: Invoice amount should match PO within 10%
+    category: validation
+    priority: high
+    conditions:
+      - field: amount_vs_po_variance
+        operator: greater_than
+        value: 10
+    action: route_for_review
+    action_params:
+      flag: amount_variance
+      route_to: purchasing
+      requires_approval: true
+    enabled: true
+
+  # --- FRAUD/DUPLICATE DETECTION ---
+
+  - id: DUPLICATE_INVOICE
+    name: Potential Duplicate Invoice
+    description: Flag potential duplicate invoice numbers
+    category: fraud
+    priority: critical
+    conditions:
+      - field: is_potential_duplicate
+        operator: equals
+        value: true
+    action: flag_for_investigation
+    action_params:
+      flag: potential_duplicate
+      block_payment: true
+      route_to: accounts_payable_manager
+    enabled: true
+
+  - id: NEW_VENDOR
+    name: New Vendor Additional Review
+    description: First invoice from new vendor
+    category: validation
+    priority: medium
+    conditions:
+      - field: vendor_invoice_count
+        operator: equals
+        value: 1
+    action: flag_for_review
+    action_params:
+      flag: new_vendor
+      requires_w9: true
+      route_to: vendor_management
+    enabled: true
+
+  # --- CATEGORY-SPECIFIC RULES ---
+
+  - id: IT_EXPENSE
+    name: IT Expense Routing
+    description: Route IT-related invoices to IT department
+    category: routing
+    priority: medium
+    conditions:
+      - field: expense_category
+        operator: in_list
+        value: ["software", "hardware", "IT services", "technology"]
+    action: route
+    action_params:
+      route_to: it_department
+      requires_it_approval: true
+    enabled: true
+
+  - id: TRAVEL_EXPENSE
+    name: Travel Expense Processing
+    description: Special handling for travel expenses
+    category: routing
+    priority: medium
+    conditions:
+      - field: expense_category
+        operator: equals
+        value: travel
+    action: route
+    action_params:
+      route_to: travel_expense_team
+      requires_receipts: true
+    enabled: true
+
+default_action:
+  action: route_for_approval
+  action_params:
+    route_to: accounts_payable
+    priority: normal
+

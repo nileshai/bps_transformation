@@ -1,0 +1,287 @@
+# Insurance Claims Processing Rules
+# =================================
+# Business rules for automated claims processing pipeline
+
+rules:
+  # --- ROUTING RULES ---
+  
+  - id: ROUTE_HIGH_VALUE
+    name: Route High Value Claims
+    description: Claims over $50,000 require senior adjuster review
+    category: routing
+    priority: high
+    conditions:
+      - field: requested_amount
+        operator: greater_than
+        value: 50000
+    action: route_to_senior
+    action_params:
+      route_to: senior_claims_adjuster
+      flag: high_value_claim
+      sla_hours: 24
+    enabled: true
+
+  - id: ROUTE_MEDICAL
+    name: Route Medical Claims
+    description: Medical claims go to specialized medical team
+    category: routing
+    priority: medium
+    conditions:
+      - field: claim_type
+        operator: equals
+        value: medical
+    action: route
+    action_params:
+      route_to: medical_claims_team
+      requires_medical_review: true
+    enabled: true
+
+  - id: ROUTE_AUTO
+    name: Route Auto Claims
+    description: Auto/vehicle claims routing
+    category: routing
+    priority: medium
+    conditions:
+      - field: claim_type
+        operator: in_list
+        value: ["auto", "vehicle", "car", "automobile"]
+    action: route
+    action_params:
+      route_to: auto_claims_team
+    enabled: true
+
+  - id: ROUTE_PROPERTY
+    name: Route Property Claims
+    description: Property damage claims routing
+    category: routing
+    priority: medium
+    conditions:
+      - field: claim_type
+        operator: in_list
+        value: ["property", "home", "building", "structure"]
+    action: route
+    action_params:
+      route_to: property_claims_team
+    enabled: true
+
+  # --- AUTO-APPROVAL RULES ---
+
+  - id: AUTO_APPROVE_SMALL
+    name: Auto-Approve Small Claims
+    description: Claims under $500 with complete documentation
+    category: approval
+    priority: low
+    logic: AND
+    conditions:
+      - field: requested_amount
+        operator: less_equal
+        value: 500
+      - field: policy_number
+        operator: is_not_empty
+      - field: signature_present
+        operator: equals
+        value: "yes"
+    action: auto_approve
+    action_params:
+      approval_level: automatic
+      notification_template: small_claim_approved
+    enabled: true
+
+  - id: AUTO_APPROVE_RECURRING
+    name: Auto-Approve Recurring Claims
+    description: Recurring claims from verified claimants
+    category: approval
+    priority: medium
+    logic: AND
+    conditions:
+      - field: claimant_verified
+        operator: equals
+        value: true
+      - field: requested_amount
+        operator: less_equal
+        value: 1000
+      - field: claim_type
+        operator: equals
+        value: medical
+    action: auto_approve
+    action_params:
+      approval_level: auto_recurring
+    enabled: true
+
+  # --- FRAUD DETECTION RULES ---
+
+  - id: FRAUD_LATE_REPORT
+    name: "Fraud Indicator: Late Reporting"
+    description: Claims reported 30+ days after incident
+    category: fraud
+    priority: critical
+    conditions:
+      - field: days_since_incident
+        operator: greater_than
+        value: 30
+    action: flag_for_investigation
+    action_params:
+      flag: late_reporting
+      route_to: fraud_investigation_unit
+      priority: high
+    enabled: true
+
+  - id: FRAUD_MULTIPLE_CLAIMS
+    name: "Fraud Indicator: Multiple Recent Claims"
+    description: Multiple claims from same claimant in 90 days
+    category: fraud
+    priority: high
+    conditions:
+      - field: claims_in_last_90_days
+        operator: greater_than
+        value: 2
+    action: flag_for_investigation
+    action_params:
+      flag: multiple_claims
+      route_to: fraud_investigation_unit
+    enabled: true
+
+  - id: FRAUD_AMOUNT_MISMATCH
+    name: "Fraud Indicator: Amount Mismatch"
+    description: Requested amount significantly higher than estimated
+    category: fraud
+    priority: high
+    conditions:
+      - field: amount_vs_estimate_ratio
+        operator: greater_than
+        value: 1.5
+    action: flag_for_investigation
+    action_params:
+      flag: amount_mismatch
+      requires_additional_review: true
+    enabled: true
+
+  - id: FRAUD_NO_WITNESSES
+    name: "Fraud Indicator: No Witnesses for Large Claim"
+    description: Large claims with no witnesses
+    category: fraud
+    priority: medium
+    logic: AND
+    conditions:
+      - field: requested_amount
+        operator: greater_than
+        value: 10000
+      - field: witnesses
+        operator: is_empty
+    action: flag_for_review
+    action_params:
+      flag: no_witnesses
+      request_additional_info: true
+    enabled: true
+
+  # --- VALIDATION RULES ---
+
+  - id: VALIDATE_POLICY
+    name: Validate Policy Number
+    description: Ensure policy number is valid format
+    category: validation
+    priority: critical
+    conditions:
+      - field: policy_number
+        operator: is_empty
+    action: request_documents
+    action_params:
+      flag: missing_policy
+      request_fields: ["policy_number", "policy_copy"]
+      route_to: customer_service
+    enabled: true
+
+  - id: VALIDATE_SIGNATURE
+    name: Validate Signature Present
+    description: Claims must have signature
+    category: validation
+    priority: high
+    conditions:
+      - field: signature_present
+        operator: not_equals
+        value: "yes"
+    action: request_documents
+    action_params:
+      flag: missing_signature
+      request_fields: ["signed_claim_form"]
+    enabled: true
+
+  - id: VALIDATE_INCIDENT_DATE
+    name: Validate Incident Date
+    description: Incident date must be provided
+    category: validation
+    priority: high
+    conditions:
+      - field: incident_date
+        operator: is_empty
+    action: request_documents
+    action_params:
+      flag: missing_incident_date
+      request_fields: ["incident_date", "incident_report"]
+    enabled: true
+
+  # --- ESCALATION RULES ---
+
+  - id: ESCALATE_VIP
+    name: Escalate VIP Customers
+    description: Priority handling for VIP policyholders
+    category: escalation
+    priority: high
+    conditions:
+      - field: customer_tier
+        operator: in_list
+        value: ["platinum", "gold", "vip"]
+    action: escalate
+    action_params:
+      escalate_to: vip_claims_team
+      priority: urgent
+      sla_hours: 4
+    enabled: true
+
+  - id: ESCALATE_COMPLEX
+    name: Escalate Complex Claims
+    description: Multi-party or legal involvement claims
+    category: escalation
+    priority: high
+    logic: OR
+    conditions:
+      - field: involves_legal
+        operator: equals
+        value: true
+      - field: multiple_parties
+        operator: equals
+        value: true
+      - field: claim_type
+        operator: equals
+        value: liability
+    action: escalate
+    action_params:
+      escalate_to: complex_claims_unit
+      requires_legal_review: true
+    enabled: true
+
+  # --- NOTIFICATION RULES ---
+
+  - id: NOTIFY_LARGE_CLAIM
+    name: Notify on Large Claims
+    description: Send immediate notification for claims over $25k
+    category: notification
+    priority: medium
+    conditions:
+      - field: requested_amount
+        operator: greater_than
+        value: 25000
+    action: notify
+    action_params:
+      recipients: ["claims_manager", "underwriting"]
+      channel: slack
+      template: large_claim_alert
+    enabled: true
+
+# Default actions when no rules match
+default_action:
+  action: route
+  action_params:
+    route_to: general_claims_queue
+    priority: normal
+
