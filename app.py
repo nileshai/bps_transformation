@@ -785,10 +785,16 @@ def main():
                     st.error("❌ Please enter a valid NVIDIA API key to process real documents")
                     st.stop()
                 
-                st.info(f"📄 Processing uploaded file: {uploaded.name}")
+                st.info(f"📄 Processing uploaded file: {uploaded.name} with {ocr_model_name}")
+                
+                # Read file bytes
+                file_bytes = uploaded.read()
+                if not file_bytes:
+                    st.error("❌ Failed to read uploaded file")
+                    st.stop()
+                st.caption(f"File size: {len(file_bytes):,} bytes")
                 
                 extractor = DocumentExtractor(api_key, ocr_model=ocr_model, llm_model=llm_model)
-                file_bytes = uploaded.read()
                 
                 try:
                     extraction_result = extractor.extract(
@@ -800,11 +806,23 @@ def main():
                     extraction_result.metadata["llm_model"] = llm_model_name
                     extraction_result.metadata["source"] = "uploaded_file"
                     
+                    # Show OCR details
+                    if extraction_result.metadata.get("page_details"):
+                        for pd in extraction_result.metadata["page_details"]:
+                            if not pd.get("success"):
+                                st.warning(f"⚠️ Page {pd.get('page')}: {pd.get('error', 'Unknown error')}")
+                    
                     if not extraction_result.entities:
                         st.warning("⚠️ OCR completed but no entities were extracted. The document may be difficult to read.")
+                        if extraction_result.raw_text:
+                            with st.expander("📝 Raw OCR Text"):
+                                st.text(extraction_result.raw_text[:2000])
                         
                 except Exception as e:
+                    import traceback
                     st.error(f"❌ Extraction failed: {str(e)}")
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
                     st.stop()
             else:
                 # Use sample data for demo (no file uploaded)

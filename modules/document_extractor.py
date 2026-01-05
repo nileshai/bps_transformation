@@ -273,6 +273,16 @@ class DocumentExtractor:
     
     def _call_nemo_ocr(self, image_b64: str, page_num: int) -> Tuple[str, Dict]:
         """Call NemoRetriever OCR API."""
+        
+        # Check base64 size limit for NemoRetriever (180K limit)
+        if len(image_b64) >= 180_000:
+            return "", {
+                "page": page_num,
+                "model": self.ocr_config["name"],
+                "error": f"Image too large ({len(image_b64)} chars). Max 180,000 for NemoRetriever.",
+                "success": False
+            }
+        
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Accept": "application/json",
@@ -283,11 +293,13 @@ class DocumentExtractor:
             "input": [{"type": "image_url", "url": f"data:image/jpeg;base64,{image_b64}"}]
         }
         
-        details = {"page": page_num, "model": self.ocr_config["name"]}
+        details = {"page": page_num, "model": self.ocr_config["name"], "base64_size": len(image_b64)}
         
         try:
+            print(f"[NemoRetriever] Calling API for page {page_num}, base64 size: {len(image_b64)}")
             response = requests.post(self.ocr_config["url"], headers=headers, json=payload, timeout=120)
             details["status_code"] = response.status_code
+            print(f"[NemoRetriever] Response status: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
@@ -311,15 +323,19 @@ class DocumentExtractor:
                 details["avg_confidence"] = round(avg_conf, 3)
                 details["output_length"] = len(combined_text)
                 
+                print(f"[NemoRetriever] Success: {len(text_parts)} detections, {len(combined_text)} chars")
                 return combined_text, details
             else:
-                details["error"] = response.text[:500]
+                error_msg = response.text[:500]
+                details["error"] = error_msg
                 details["success"] = False
+                print(f"[NemoRetriever] Error {response.status_code}: {error_msg}")
                 return "", details
                 
         except Exception as e:
             details["error"] = str(e)
             details["success"] = False
+            print(f"[NemoRetriever] Exception: {str(e)}")
             return "", details
     
     def _call_vision_ocr(self, image_b64: str, page_num: int) -> Tuple[str, Dict]:
@@ -466,12 +482,18 @@ DOCUMENT TEXT (from {total_pages} pages):
             
             if resp.status_code == 200:
                 data = resp.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                content = data.get("choices", [{}])[0].get("message", {}).get("content")
                 
-                # Clean and parse JSON
+                # Handle None content
+                if not content:
+                    print("Entity extraction: LLM returned empty content")
+                    return {}, {}
+                
+                # Clean and parse JSON - handle thinking tags
                 if "</think>" in content:
                     content = content.split("</think>")[-1].strip()
-                content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+                if "<think>" in content:
+                    content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
                 
                 # Extract JSON from response
                 json_match = re.search(r'\{[\s\S]*\}', content)
@@ -485,8 +507,14 @@ DOCUMENT TEXT (from {total_pages} pages):
                         confidence = {k: 0.90 for k in entities.keys()}
                     
                     return entities, confidence
+                else:
+                    print(f"Entity extraction: Could not find JSON in response: {content[:200]}")
+            else:
+                print(f"Entity extraction: LLM returned status {resp.status_code}: {resp.text[:200]}")
         except Exception as e:
+            import traceback
             print(f"Entity extraction error: {e}")
+            print(traceback.format_exc())
         
         return {}, {}
     
