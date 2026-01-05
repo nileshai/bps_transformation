@@ -681,7 +681,7 @@ def main():
         doc_type = st.selectbox(
             "Business Process",
             options=list(RULE_SETS.keys()),
-            index=0,
+            index=3,  # Default to "Account Opening"
             help="Select the business process to demo"
         )
         
